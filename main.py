@@ -5,9 +5,7 @@ import matplotlib.pyplot as plt
 import random
 from datetime import datetime, timedelta
 import re
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize, sent_tokenize
+# NLTK imports removed
 import io
 import base64
 from PIL import Image
@@ -25,13 +23,47 @@ except ImportError:
     DUCKDUCKGO_SEARCH_AVAILABLE = False
     # This warning will be shown in the UI later if needed
 
-# Initialize NLTK resources
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
+# NLTK resource initialization removed
+
+# --- Custom NLP Utilities (Replacing NLTK) ---
+CUSTOM_STOPWORDS = set([
+    'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', "aren't", 'as', 'at',
+    'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by',
+    'can', "can't", 'cannot', 'could', "couldn't", 'did', "didn't", 'do', 'does', "doesn't", 'doing', "don't", 'down', 'during',
+    'each', 'few', 'for', 'from', 'further', 'had', "hadn't", 'has', "hasn't", 'have', "haven't", 'having', 'he', "he'd", "he'll", "he's", 'her', 'here', "here's", 'hers', 'herself', 'him', 'himself', 'his', 'how', "how's",
+    'i', "i'd", "i'll", "i'm", "i've", 'if', 'in', 'into', 'is', "isn't", 'it', "it's", 'its', 'itself',
+    "let's", 'me', 'more', 'most', "mustn't", 'my', 'myself',
+    'no', 'nor', 'not', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'ought', 'our', 'ours', 'ourselves', 'out', 'over', 'own',
+    'same', "shan't", 'she', "she'd", "she'll", "she's", 'should', "shouldn't", 'so', 'some', 'such',
+    'than', 'that', "that's", 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', "there's", 'these', 'they', "they'd", "they'll", "they're", "they've", 'this', 'those', 'through', 'to', 'too',
+    'under', 'until', 'up', 'very', 'was', "wasn't", 'we', "we'd", "we'll", "we're", "we've", 'were', "weren't", 'what', "what's", 'when', "when's", 'where', "where's", 'which', 'while', 'who', "who's", 'whom', 'why', "why's", 'with', "won't", 'would', "wouldn't",
+    'you', "you'd", "you'll", "you're", "you've", 'your', 'yours', 'yourself', 'yourselves',
+    'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+    'also', 'however', 'therefore', 'thus', 'often', 'will', 'inc', 'llc', 'corp', 'ltd', 'gmbh', 'pvt', 'mr', 'mrs', 'ms', 'dr', 'eg', 'ie', 'etc', 'vs',
+    'fig', 'figure', 'table', 'report', 'study', 'market', 'data', 'research', 'analysis', 'page', 'source', 'article',
+    'company', 'companies', 'player', 'players', 'segment', 'segments', 'region', 'regions', 'growth', 'size', 'share',
+    'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+])
+
+def custom_sent_tokenize(text):
+    if not text:
+        return []
+    # Split by common sentence-ending punctuation followed by whitespace or end of string.
+    # Using positive lookbehind to keep the punctuation as part of the preceding sentence.
+    # This regex looks for '.', '!', or '?' followed by one or more whitespace characters.
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    # Filter out any empty strings that might result from multiple spaces or trailing punctuation
+    return [s.strip() for s in sentences if s.strip()]
+
+def custom_word_tokenize(text):
+    if not text:
+        return []
+    # Find all sequences of word characters (alphanumeric + underscore).
+    # \b ensures word boundaries. \w+ matches one or more alphanumeric characters.
+    # Converts to lowercase.
+    words = re.findall(r'\b\w+\b', text.lower())
+    return words
+# --- End Custom NLP Utilities ---
 
 # Utility functions (unchanged from original)
 def generate_placeholder_image(width=800, height=400, text="Placeholder Chart"):
@@ -106,7 +138,6 @@ class WebResearcher:
                 return response
             except requests.RequestException as e:
                 if attempt == retries - 1:
-                    # st.warning(f"Failed to fetch data from {url} after {retries} attempts: {str(e)}") # Too verbose for UI
                     print(f"Warning: Failed to fetch data from {url} after {retries} attempts: {str(e)}")
                     return None
                 time.sleep(0.5)
@@ -117,7 +148,6 @@ class WebResearcher:
     
     def search_web_ddg(self, query, num_results=3):
         if not DUCKDUCKGO_SEARCH_AVAILABLE:
-            # This warning is now handled in main() once at startup
             return self.simulate_search_results(query, num_results)
 
         cache_key = f"ddg_{query}_{num_results}"
@@ -153,38 +183,32 @@ class WebResearcher:
         if response:
             try:
                 soup = BeautifulSoup(response.content, 'html.parser')
-                for script_or_style in soup(["script", "style", "nav", "footer", "aside"]): # Remove more noise
+                for script_or_style in soup(["script", "style", "nav", "footer", "aside"]): 
                     script_or_style.decompose()
                 
                 text_parts = []
                 main_content = soup.find('main') or soup.find('article') or soup.find('div', role='main')
-                content_container = main_content if main_content else soup.body # Fallback to body
+                content_container = main_content if main_content else soup.body 
 
                 if content_container:
-                    # Prefer longer paragraphs, then headers, then list items
                     for element in content_container.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li', 'div']):
-                         # Try to get text from elements that seem to be main content
-                        if element.name == 'p' and len(element.get_text(strip=True)) > 50 : # Longer paragraphs
+                        if element.name == 'p' and len(element.get_text(strip=True)) > 50 : 
                              text_parts.append(element.get_text(separator=" ", strip=True))
                         elif element.name in ['h1','h2','h3','h4']:
                              text_parts.append(element.get_text(separator=" ", strip=True))
                         elif element.name == 'li' and len(element.get_text(strip=True)) > 10:
                              text_parts.append(element.get_text(separator=" ", strip=True))
-                        # For divs, be more selective to avoid grabbing sidebars missed by decompose
                         elif element.name == 'div' and not element.find(['nav','aside','footer']) and len(element.get_text(strip=True)) > 100 :
-                            # Check if it has direct text or few children that are not block level
                             if element.find(lambda tag: tag.name not in ['p','h1','h2','h3','h4','li','img','figure','table','ul','ol'] and tag.string and tag.string.strip()):
                                  text_parts.append(element.get_text(separator=" ", strip=True))
 
-
-                if not text_parts and content_container: # Broader fallback if specific tags yield little
+                if not text_parts and content_container: 
                     text_content_full = content_container.get_text(separator='\n', strip=True)
                     text_parts = [line for line in text_content_full.split('\n') if line and len(line) > 20]
 
-
                 text_content = "\n".join(text_parts)
-                text_content = re.sub(r'\s*\n\s*', '\n', text_content) # Normalize multiple newlines with surrounding spaces
-                text_content = re.sub(r'[ \t]+', ' ', text_content)   # Replace multiple spaces/tabs with single space
+                text_content = re.sub(r'\s*\n\s*', '\n', text_content) 
+                text_content = re.sub(r'[ \t]+', ' ', text_content)   
                 text_content = text_content.strip()
 
                 self.page_content_cache[url] = text_content
@@ -219,7 +243,7 @@ class WebResearcher:
                 st.write(f"   ∟ Fetching: {title} ({link})...")
                 content = self.get_content_from_url(link)
                 if content:
-                    combined_text_for_processing += content + "\n\n" # Add separator
+                    combined_text_for_processing += content + "\n\n" 
                     fetched_sources_list.append({'title': title, 'link': link})
                     time.sleep(0.1) 
                 else:
@@ -242,7 +266,7 @@ class WebResearcher:
     
         return market_data_from_web, fetched_sources_list, combined_text_for_processing.strip()
 
-    def extract_market_data(self, combined_text, industry): # For industry queries
+    def extract_market_data(self, combined_text, industry): 
         market_data = {
             "market_size": "", "cagr": "", "key_players": [], "trends": [], "challenges": [],
             "year": datetime.now().year
@@ -302,19 +326,19 @@ class WebResearcher:
         market_data["key_players"] = [x for x in companies if x and not (x in seen or seen.add(x))][:10]
 
         try:
-            sentences = sent_tokenize(combined_text)
-            stop_words = set(stopwords.words('english'))
+            sentences = custom_sent_tokenize(combined_text) # Using custom_sent_tokenize
+            # stop_words = CUSTOM_STOPWORDS (not directly used here, but good to be aware if modifying trend/challenge logic further)
 
             trend_keywords = ["innovation", "advancement", "growth in", "adoption of", "increasing demand", "shift towards", "emergence of", "rising popularity", "expanding use"]
             trends_found = [s.strip() for s in sentences if any(kw in s.lower() for kw in trend_keywords) and 30 < len(s.strip()) < 250]
-            market_data["trends"] = list(dict.fromkeys(trends_found))[:5] # Unique
+            market_data["trends"] = list(dict.fromkeys(trends_found))[:5] 
 
             challenge_keywords = ["challenge", "obstacle", "barrier", "issue", "concern", "risk", "limitation", "constraint", "difficulty", "threat"]
             challenges_found = [s.strip() for s in sentences if any(kw in s.lower() for kw in challenge_keywords) and 30 < len(s.strip()) < 250]
-            market_data["challenges"] = list(dict.fromkeys(challenges_found))[:3] # Unique
+            market_data["challenges"] = list(dict.fromkeys(challenges_found))[:3] 
 
         except Exception as e:
-            print(f"Warning: NLTK processing error: {e}")
+            print(f"Warning: Error during market data text processing: {e}")
             market_data["trends"] = ["Trend extraction issue."]
             market_data["challenges"] = ["Challenge extraction issue."]
         return market_data
@@ -327,17 +351,17 @@ class WebResearcher:
         if not combined_text: return summary_data
 
         try:
-            sentences = sent_tokenize(combined_text)
+            sentences = custom_sent_tokenize(combined_text) # Using custom_sent_tokenize
             if not sentences: return summary_data
 
-            stop_words = set(stopwords.words('english'))
-            query_words_tokenized = word_tokenize(query_text.lower())
+            stop_words = CUSTOM_STOPWORDS # Using custom stopwords
+            query_words_tokenized = custom_word_tokenize(query_text) # Using custom_word_tokenize
             query_content_words = [w for w in query_words_tokenized if w.isalnum() and w not in stop_words and len(w) > 2]
 
             sentence_scores = []
             for i, s in enumerate(sentences):
                 score = 0
-                sent_words = word_tokenize(s.lower())
+                sent_words = custom_word_tokenize(s) # Using custom_word_tokenize
                 for qw in query_content_words:
                     if qw in sent_words: score += 1
                 if i < 3: score += 0.5 
@@ -350,16 +374,19 @@ class WebResearcher:
             
             if len(selected_scored_sentences) < num_summary_sentences:
                 additional_needed = num_summary_sentences - len(selected_scored_sentences)
-                for s in sentences:
+                for s_original in sentences: # Iterate original sentences to maintain some order
                     if additional_needed == 0: break
-                    if s not in selected_scored_sentences:
-                        selected_scored_sentences.append(s)
+                    s_stripped = s_original.strip() # Ensure we compare stripped sentences
+                    # Check if the stripped version of s_original is not already in selected_scored_sentences
+                    # This requires selected_scored_sentences to also contain stripped sentences if that's the comparison basis.
+                    # Assuming selected_scored_sentences already contains stripped sentences from sentence_scores.
+                    if s_stripped not in selected_scored_sentences and len(s_stripped) > 30 and len(s_stripped) < 500:
+                        selected_scored_sentences.append(s_stripped)
                         additional_needed -=1
             
             summary_data["summary_sentences"] = list(dict.fromkeys(selected_scored_sentences))[:num_summary_sentences]
 
-
-            words = word_tokenize(combined_text.lower())
+            words = custom_word_tokenize(combined_text) # Using custom_word_tokenize
             filtered_words = [word for word in words if word.isalnum() and word not in stop_words and len(word) > 3]
             
             if filtered_words:
@@ -909,7 +936,7 @@ def main():
     for i, example in enumerate(query_examples):
         if cols[i].button(example, key=f"example_{i}", use_container_width=True):
             st.session_state.query_input = example
-            st.rerun() # UPDATED from st.experimental_rerun()
+            st.rerun() 
 
     generate_button = st.button("🚀 Generate Report", type="primary", use_container_width=True, disabled=(not st.session_state.query_input))
     
@@ -988,7 +1015,7 @@ def main():
         st.warning("Please enter a query to generate a report.")
 
     st.markdown("---")
-    st.caption("AI Research & Report Generator. Web search via DuckDuckGo (if lib available).")
+    st.caption("AI Research & Report Generator. Web search via DuckDuckGo (if lib available). NLP via custom regex.")
 
 if __name__ == "__main__":
     main()
