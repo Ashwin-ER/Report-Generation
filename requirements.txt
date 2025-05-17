@@ -1,0 +1,10 @@
+beautifulsoup4==4.13.4
+duckduckgo_search==8.0.2
+matplotlib==3.10.3
+nltk==3.9.1
+pandas==2.2.3
+Pillow==11.2.1
+plotly==5.18.0
+protobuf==6.31.0
+Requests==2.32.3
+streamlit==1.31.0
