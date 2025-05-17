@@ -1,8 +1,6 @@
 streamlit
 pandas
 matplotlib
-nltk
-Pillow  
 requests
 beautifulsoup4
 duckduckgo-search
