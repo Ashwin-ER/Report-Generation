@@ -14,8 +14,44 @@ from PIL import Image
 import requests
 from bs4 import BeautifulSoup
 import json
-import urllib.parse
+# import urllib.parse # Not actively used, can be removed if truly not needed
 from collections import Counter
+import os # Added for NLTK path
+
+# --- NLTK Data Setup ---
+# Path to the local nltk_data directory (if you packaged it)
+local_nltk_data_path = os.path.join(os.path.dirname(__file__), "nltk_data")
+
+# Check if the local path exists and add it to NLTK's data path
+if os.path.exists(local_nltk_data_path):
+    # Ensure it's at the beginning of the path list so it's checked first
+    if local_nltk_data_path not in nltk.data.path:
+        nltk.data.path.insert(0, local_nltk_data_path)
+    print(f"NLTK data path configured to include: {local_nltk_data_path}")
+else:
+    print(f"Local NLTK data path not found: {local_nltk_data_path}. NLTK will use default download paths.")
+
+# Initialize NLTK resources
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+    print("NLTK resources 'punkt' and 'stopwords' found.")
+except LookupError:
+    print("NLTK resources 'punkt' or 'stopwords' not found. Attempting download...")
+    try:
+        nltk.download('punkt', quiet=True)
+        nltk.download('stopwords', quiet=True)
+        print("NLTK resources downloaded successfully.")
+    except Exception as e:
+        # This st.error might not be visible during initial app spin-up on cloud
+        # but is useful for local debugging.
+        # st.error(f"Failed to download NLTK resources: {e}")
+        print(f"CRITICAL: Failed to download NLTK resources: {e}. App may not function correctly.")
+        # For critical resources, you might want to raise an error or stop the app
+        # if they cannot be loaded, as functionality will be impaired.
+        # For now, we'll let it proceed and the app might show errors later.
+# --- End NLTK Data Setup ---
+
 
 # Attempt to import duckduckgo_search
 try:
@@ -25,13 +61,6 @@ except ImportError:
     DUCKDUCKGO_SEARCH_AVAILABLE = False
     # This warning will be shown in the UI later if needed
 
-# Initialize NLTK resources
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
 
 # Utility functions (unchanged from original)
 def generate_placeholder_image(width=800, height=400, text="Placeholder Chart"):
@@ -72,8 +101,8 @@ def create_pie_chart(title, labels, values):
 
 def create_line_chart(title, x_label, y_label, data_dict):
     fig, ax = plt.subplots(figsize=(10, 6))
-    for key, values in data_dict.items():
-        ax.plot(range(len(values)), values, label=key)
+    for key, values_list in data_dict.items(): # Renamed 'values' to 'values_list' to avoid conflict
+        ax.plot(range(len(values_list)), values_list, label=key)
     ax.set_title(title)
     ax.set_xlabel(x_label)
     ax.set_ylabel(y_label)
@@ -97,7 +126,7 @@ class WebResearcher:
         }
         self.search_results_cache = {}
         self.page_content_cache = {}
-        
+
     def safe_request(self, url, retries=3, timeout=10):
         for attempt in range(retries):
             try:
@@ -114,7 +143,7 @@ class WebResearcher:
                 print(f"Warning: An unexpected error occurred while fetching {url}: {e}")
                 return None
         return None
-    
+
     def search_web_ddg(self, query, num_results=3):
         if not DUCKDUCKGO_SEARCH_AVAILABLE:
             # This warning is now handled in main() once at startup
@@ -137,7 +166,7 @@ class WebResearcher:
             if not results:
                 print(f"Warning: DuckDuckGo search for '{query}' yielded no results. Falling back to simulation.")
                 return self.simulate_search_results(query, num_results)
-            
+
             self.search_results_cache[cache_key] = results
             return results
         except Exception as e:
@@ -155,7 +184,7 @@ class WebResearcher:
                 soup = BeautifulSoup(response.content, 'html.parser')
                 for script_or_style in soup(["script", "style", "nav", "footer", "aside"]): # Remove more noise
                     script_or_style.decompose()
-                
+
                 text_parts = []
                 main_content = soup.find('main') or soup.find('article') or soup.find('div', role='main')
                 content_container = main_content if main_content else soup.body # Fallback to body
@@ -192,7 +221,7 @@ class WebResearcher:
             except Exception as e:
                 print(f"Warning: Error parsing content from {url}: {e}")
         return ""
-        
+
     def research_topic_online(self, topic_query, is_industry_query):
         if is_industry_query:
             search_query_detail = "market analysis report size growth key players trends challenges 2023 2024"
@@ -212,7 +241,7 @@ class WebResearcher:
             return market_data_from_web, [], ""
 
         st.write("📑 Fetching content from search results (top 1-2 for speed):")
-        for i, result in enumerate(search_results_metadata[:2]): 
+        for i, result in enumerate(search_results_metadata[:2]):
             link = result.get('link')
             title = result.get('title', 'No Title')
             if link:
@@ -221,7 +250,7 @@ class WebResearcher:
                 if content:
                     combined_text_for_processing += content + "\n\n" # Add separator
                     fetched_sources_list.append({'title': title, 'link': link})
-                    time.sleep(0.1) 
+                    time.sleep(0.1)
                 else:
                     st.write(f"     Failed to fetch content from {link}")
             else:
@@ -230,7 +259,7 @@ class WebResearcher:
         if not combined_text_for_processing.strip():
              st.warning("Could not fetch detailed content. Using search snippets.")
              combined_text_for_processing = " ".join([res.get('snippet', '') for res in search_results_metadata if res.get('snippet')])
-        
+
         if not combined_text_for_processing.strip():
             st.warning("No text content gathered. Falling back to simulated snippet.")
             sim_results = self.simulate_search_results(topic_query, 1)
@@ -238,13 +267,11 @@ class WebResearcher:
 
         market_data_from_web = {}
         if is_industry_query:
-            market_data_from_web = self.extract_market_data(combined_text_for_processing, topic_query) 
-    
+            market_data_from_web = self.extract_market_data(combined_text_for_processing, topic_query)
+
         return market_data_from_web, fetched_sources_list, combined_text_for_processing.strip()
 
     def extract_market_data(self, combined_text, industry): # For industry queries
-        # (This method is largely the same as your previous version, ensure it's robust)
-        # ... (Content of extract_market_data from previous version) ...
         market_data = {
             "market_size": "", "cagr": "", "key_players": [], "trends": [], "challenges": [],
             "year": datetime.now().year
@@ -275,7 +302,7 @@ class WebResearcher:
             if match:
                 market_data["cagr"] = match.group(1).replace(" ", "")
                 break
-        
+
         companies = []
         player_intro_patterns = [
             r"(?:key players|major players|leading companies|prominent players|market leaders|significant players)\s*(?:include|are|such as|comprise|operating in this market are)\s*:?\s*([^.]+)\.",
@@ -284,7 +311,7 @@ class WebResearcher:
         raw_player_strings = []
         for pattern in player_intro_patterns:
             for match_obj in re.finditer(pattern, combined_text, re.IGNORECASE): raw_player_strings.append(match_obj.group(1))
-        
+
         specific_company_patterns = [
             r"\b(Tesla|BYD|Volkswagen|SAIC|Stellantis|Mercedes-Benz|Ford|General Motors|Hyundai-Kia|Toyota)\b",
             r"\b(Google|Alphabet|Microsoft|Amazon|NVIDIA|IBM|Meta|OpenAI|Anthropic|Baidu|Apple|Salesforce|Oracle)\b",
@@ -301,13 +328,13 @@ class WebResearcher:
                 player = player.strip()
                 if player and len(player.split()) <= 4 and player[0].isupper() and not player.endswith("etc") and len(player) > 2:
                     if player not in companies: companies.append(player)
-        
+
         seen = set()
         market_data["key_players"] = [x for x in companies if x and not (x in seen or seen.add(x))][:10]
 
         try:
             sentences = sent_tokenize(combined_text)
-            stop_words = set(stopwords.words('english'))
+            stop_words_set = set(stopwords.words('english')) # Renamed to avoid conflict
 
             trend_keywords = ["innovation", "advancement", "growth in", "adoption of", "increasing demand", "shift towards", "emergence of", "rising popularity", "expanding use"]
             trends_found = [s.strip() for s in sentences if any(kw in s.lower() for kw in trend_keywords) and 30 < len(s.strip()) < 250]
@@ -318,7 +345,7 @@ class WebResearcher:
             market_data["challenges"] = list(dict.fromkeys(challenges_found))[:3] # Unique
 
         except Exception as e:
-            print(f"Warning: NLTK processing error: {e}")
+            print(f"Warning: NLTK processing error in extract_market_data: {e}")
             market_data["trends"] = ["Trend extraction issue."]
             market_data["challenges"] = ["Challenge extraction issue."]
         return market_data
@@ -334,9 +361,9 @@ class WebResearcher:
             sentences = sent_tokenize(combined_text)
             if not sentences: return summary_data
 
-            stop_words = set(stopwords.words('english'))
+            stop_words_set = set(stopwords.words('english')) # Renamed
             query_words_tokenized = word_tokenize(query_text.lower())
-            query_content_words = [w for w in query_words_tokenized if w.isalnum() and w not in stop_words and len(w) > 2]
+            query_content_words = [w for w in query_words_tokenized if w.isalnum() and w not in stop_words_set and len(w) > 2]
 
             # Simple sentence scoring: count query content words
             sentence_scores = []
@@ -346,32 +373,32 @@ class WebResearcher:
                 for qw in query_content_words:
                     if qw in sent_words: score += 1
                 # Boost first few sentences slightly as they are often introductory
-                if i < 3: score += 0.5 
+                if i < 3: score += 0.5
                 if len(s) > 30 and len(s) < 500 : # Filter sentence length
                     sentence_scores.append((s, score, i)) # Keep original index for potential ordering
 
             # Sort by score (desc) then original index (asc)
             sentence_scores.sort(key=lambda x: (-x[1], x[2]))
-            
+
             # Select top N sentences, trying to maintain some order from original text
-            selected_scored_sentences = [s[0] for s in sentence_scores[:num_summary_sentences * 2]] # Get more candidates
-            
+            selected_scored_sentences_candidates = [s[0] for s in sentence_scores[:num_summary_sentences * 2]] # Get more candidates
+
             # Fallback if scoring yields too few
-            if len(selected_scored_sentences) < num_summary_sentences:
-                additional_needed = num_summary_sentences - len(selected_scored_sentences)
+            if len(selected_scored_sentences_candidates) < num_summary_sentences:
+                additional_needed = num_summary_sentences - len(selected_scored_sentences_candidates)
                 # Add from beginning of original text if not already selected
-                for s in sentences:
+                for s_original in sentences: # Renamed 's' to 's_original'
                     if additional_needed == 0: break
-                    if s not in selected_scored_sentences:
-                        selected_scored_sentences.append(s)
+                    if s_original not in selected_scored_sentences_candidates:
+                        selected_scored_sentences_candidates.append(s_original)
                         additional_needed -=1
-            
-            summary_data["summary_sentences"] = list(dict.fromkeys(selected_scored_sentences))[:num_summary_sentences]
+
+            summary_data["summary_sentences"] = list(dict.fromkeys(selected_scored_sentences_candidates))[:num_summary_sentences]
 
 
             words = word_tokenize(combined_text.lower())
-            filtered_words = [word for word in words if word.isalnum() and word not in stop_words and len(word) > 3]
-            
+            filtered_words = [word for word in words if word.isalnum() and word not in stop_words_set and len(word) > 3]
+
             if filtered_words:
                 word_counts = Counter(filtered_words)
                 summary_data["keywords"] = [kw for kw, count in word_counts.most_common(num_keywords)]
@@ -427,7 +454,6 @@ class QueryTopicResearcher: # Renamed from IndustryResearcher
                 "forecast": {"Google": [25,24,23], "Microsoft": [22,23,24], "Others": [53,53,53]},
                 "opportunities": ["Business process automation.", "Personalized experiences.", "Scientific breakthroughs."]
             },
-            # ... add other predefined industries (Renewable Energy, Cloud Computing) here similarly ...
             "renewable energy": {
                 "market_size": "USD 1.2 Trillion (2023)", "cagr": "8.5%", "key_players": ["NextEra", "Ørsted", "Enel"],
                 "trends": ["Global clean energy transition.","Decreasing solar/wind costs.","Energy storage investment."],
@@ -453,7 +479,7 @@ class QueryTopicResearcher: # Renamed from IndustryResearcher
             for keyword in keywords_list:
                 if keyword in query_lower:
                     return industry_key, "industry_analysis" # Return the simple key and type
-        
+
         # If no specific industry keyword match, check for general industry terms
         general_industry_terms = ["market", "industry", "sector", "cagr", "market share", "competitors"]
         if any(term in query_lower for term in general_industry_terms):
@@ -494,7 +520,7 @@ class QueryTopicResearcher: # Renamed from IndustryResearcher
                     "market_share": {}, "regions": {}, "segments": {}, "forecast": {}, "opportunities": [],
                     "year": datetime.now().year
                 }
-            
+
             # Merge web-scraped market data into final_data_payload
             if web_specific_market_data.get("market_size"): final_data_payload["market_size"] = web_specific_market_data["market_size"]
             if web_specific_market_data.get("cagr"): final_data_payload["cagr"] = web_specific_market_data["cagr"]
@@ -521,16 +547,15 @@ class QueryTopicResearcher: # Renamed from IndustryResearcher
         final_data_payload["query_type"] = query_type
         final_data_payload["query_topic"] = identified_topic # The determined topic name
         final_data_payload["original_query"] = query_text_input
-        
+
         return final_data_payload
 
 class DataAnalyzer: # Industry-specific analysis
     def analyze_market_trends(self, industry_data):
-        # ... (Same as your previous version, ensure it defaults gracefully if data missing)
         market_size = industry_data.get("market_size", "N/A")
         growth_rate = industry_data.get("cagr", "N/A")
         trends = industry_data.get("trends", ["No specific trends identified."])
-        
+
         analysis = {
             "market_size": market_size, "growth_rate": growth_rate,
             "key_trends": trends if trends else ["No specific trends identified."],
@@ -540,19 +565,18 @@ class DataAnalyzer: # Industry-specific analysis
         return analysis
 
     def analyze_competitors(self, industry_data):
-        # ... (Same as your previous version, ensure it defaults gracefully)
         key_players = industry_data.get("key_players", ["Player A", "Player B"])
         market_share = industry_data.get("market_share", {"Player A": 60, "Others": 40})
-        
-        sorted_shares = sorted([(k, v) for k, v in market_share.items() if k != "Others" and isinstance(v, (int, float)) and v > 0], 
+
+        sorted_shares = sorted([(k, v) for k, v in market_share.items() if k != "Others" and isinstance(v, (int, float)) and v > 0],
                               key=lambda x: x[1], reverse=True)
         cr4 = sum(s[1] for s in sorted_shares[:4]) if sorted_shares else 0
-        
+
         structure = "Competitive"
         if cr4 > 80: structure = "Highly concentrated"
         elif cr4 > 60: structure = "Concentrated"
         elif cr4 > 40: structure = "Moderately concentrated"
-            
+
         analysis = {
             "key_players": key_players, "market_share": market_share,
             "market_concentration": {"cr4": cr4, "structure": structure},
@@ -560,9 +584,8 @@ class DataAnalyzer: # Industry-specific analysis
             "top_players": [name for name, _ in sorted_shares[:3]] if sorted_shares else ["N/A"]
         }
         return analysis
-        
+
     def analyze_regional_impact(self, industry_data):
-        # ... (Same, with defaults)
         regions = industry_data.get("regions", {"Global Focus": 100})
         dominant_region = max(regions.items(), key=lambda x: x[1])[0] if regions else "N/A"
         cagr_val = float(str(industry_data.get("cagr","5%")).replace('%','').replace('N/A','5'))
@@ -571,29 +594,27 @@ class DataAnalyzer: # Industry-specific analysis
         analysis = {
             "regional_distribution": regions, "dominant_region": dominant_region,
             "regional_growth": growth_rates, "fastest_growing": fastest_growing,
-            "emerging_markets": [r for r,s in regions.items() if s < 15 and growth_rates.get(r,0) > (cagr_val*0.8)]
+            "emerging_markets": [r for r,s_val in regions.items() if s_val < 15 and growth_rates.get(r,0) > (cagr_val*0.8)] # Renamed 's' to 's_val'
         }
         return analysis
-        
+
     def analyze_segments(self, industry_data):
-        # ... (Same, with defaults)
         segments = industry_data.get("segments", {"Primary Segment": 100})
         dominant_segment = max(segments.items(), key=lambda x: x[1])[0] if segments else "N/A"
         cagr_val = float(str(industry_data.get("cagr","5%")).replace('%','').replace('N/A','5'))
-        growth_rates = {s: round(random.uniform(max(1,cagr_val*0.6), cagr_val*1.8),1) for s in segments.keys()}
+        growth_rates = {s_key: round(random.uniform(max(1,cagr_val*0.6), cagr_val*1.8),1) for s_key in segments.keys()} # Renamed 's' to 's_key'
         fastest_growing = max(growth_rates.items(), key=lambda x: x[1])[0] if growth_rates else "N/A"
         analysis = {
             "segment_distribution": segments, "dominant_segment": dominant_segment,
             "segment_growth": growth_rates, "fastest_growing": fastest_growing
         }
         return analysis
-        
+
     def analyze_future_outlook(self, industry_data):
-        # ... (Same, with defaults)
         forecast = industry_data.get("forecast", {"Overall Market": [10,12,15]})
         if not isinstance(forecast, dict) or not forecast: forecast = {"Overall Market": [10,12,15]}
-        for k,v in forecast.items(): # Ensure values are numeric lists
-            if not isinstance(v, list) or not all(isinstance(x,(int,float)) for x in v):
+        for k,v_list in forecast.items(): # Renamed 'v' to 'v_list'
+            if not isinstance(v_list, list) or not all(isinstance(x,(int,float)) for x in v_list):
                 forecast[k] = [random.randint(10,20) for _ in range(3)]
 
         challenges = industry_data.get("challenges", ["Generic challenge 1"])
@@ -603,7 +624,7 @@ class DataAnalyzer: # Industry-specific analysis
             if len(data)>1:
                 trend = data[-1]-data[0]; pc = round((data[-1]-data[0])/data[0]*100,1) if data[0]!=0 else 0
                 trend_analysis[co]={"data":data,"overall_trend":trend,"direction":"increasing" if trend>0 else "decreasing","percent_change":pc}
-        growing_cos = sorted([(k,v["percent_change"]) for k,v in trend_analysis.items() if v["percent_change"]>0],key=lambda x:x[1],reverse=True)
+        growing_cos = sorted([(k_item,v_item["percent_change"]) for k_item,v_item in trend_analysis.items() if v_item["percent_change"]>0],key=lambda x:x[1],reverse=True) # Renamed 'k,v' to 'k_item, v_item'
         analysis = {
             "forecast_data": forecast, "trend_analysis": trend_analysis,
             "fastest_growing_players": [n for n,_ in growing_cos[:3]] if growing_cos else ["N/A"],
@@ -614,12 +635,11 @@ class DataAnalyzer: # Industry-specific analysis
 class ReportGenerator:
     # --- Industry Specific Sections ---
     def generate_executive_summary(self, topic_name, market_analysis, competitor_analysis):
-        # ... (largely same as your previous good version, ensure graceful N/A handling)
         market_size = market_analysis.get("market_size", "N/A")
         growth_rate = market_analysis.get("growth_rate", "N/A")
         top_players_list = competitor_analysis.get("top_players", ["Key industry participants"])
         top_players = ", ".join(top_players_list[:3]) if top_players_list and top_players_list[0] != "N/A" else "Key industry participants"
-        
+
         structure = competitor_analysis.get("market_concentration", {}).get("structure", "competitive")
         cr4 = competitor_analysis.get("market_concentration", {}).get("cr4", 0)
 
@@ -634,7 +654,6 @@ class ReportGenerator:
 This report offers strategic insights for success."""
 
     def generate_market_overview(self, topic_name, market_analysis, regional_analysis, segment_analysis):
-        # ... (largely same as your previous good version, ensure graceful N/A handling)
         ma = market_analysis; ra = regional_analysis; sa = segment_analysis
         trends = ma.get("key_trends", ["a key development", "another shift"])
         return f"""## Market Overview
@@ -649,9 +668,8 @@ Segments: {", ".join(list(sa.get("segment_distribution",{}).keys()))}. Dominant:
 2. {trends[1].strip('.') if len(trends)>1 else 'N/A'}."""
 
     def generate_competitor_analysis(self, topic_name, competitor_analysis):
-        # ... (largely same as your previous good version, ensure graceful N/A handling)
         ca = competitor_analysis; mc = ca.get("market_concentration",{})
-        sorted_comp = sorted([(k,v) for k,v in ca.get("market_share",{}).items() if k!="Others" and v>0], key=lambda x:x[1], reverse=True)[:5]
+        sorted_comp = sorted([(k,v_val) for k,v_val in ca.get("market_share",{}).items() if k!="Others" and v_val>0], key=lambda x:x[1], reverse=True)[:5] # Renamed 'v' to 'v_val'
         players_str = ""
         if not sorted_comp: players_str = "Detailed competitor data is limited."
         else:
@@ -671,7 +689,6 @@ Segments: {", ".join(list(sa.get("segment_distribution",{}).keys()))}. Dominant:
 Landscape: {"intense" if ca.get("leader_advantage",0)<8 else "stable"}. Leader vs challenger gap: {ca.get("leader_advantage",0):.1f} pts."""
 
     def generate_trends_analysis(self, market_analysis):
-        # ... (largely same as your previous good version)
         trends = market_analysis.get("key_trends", [])
         strengths = market_analysis.get("trend_strength", [])
         analysis = "## Key Industry Trends\nInfluential trends shaping the industry:\n"
@@ -684,12 +701,11 @@ Landscape: {"intense" if ca.get("leader_advantage",0)<8 else "stable"}. Leader v
         return analysis
 
     def generate_strategic_recommendations(self, topic_name, market_analysis, competitor_analysis, future_analysis):
-        # ... (largely same as your previous good version)
         fa = future_analysis; ca = competitor_analysis; ma = market_analysis
         ops = fa.get("key_opportunities",["new tech","customer engagement"])[:2]
         chs = fa.get("key_challenges",["econ uncertainty","talent shortage"])[:2]
         mc_cr4 = ca.get("market_concentration",{}).get("cr4",50)
-        
+
         return f"""## Strategic Recommendations
 For {topic_name.title()} market:
 1. **Market Navigation**: {'Focus on niches if CR4 > 70%' if mc_cr4 > 70 else 'Innovate to gain share if CR4 < 70%'}.
@@ -700,7 +716,6 @@ For {topic_name.title()} market:
 6. **Ecosystem**: Explore alliances to address challenges or access new markets."""
 
     def generate_future_outlook(self, topic_name, future_analysis):
-        # ... (largely same as your previous good version)
         fa = future_analysis
         gps = fa.get("fastest_growing_players",["Emerging players"])
         kcs = fa.get("key_challenges",["Evolving demands","New regulations"])[:2]
@@ -726,7 +741,7 @@ This report provides a summary of information related to your query: "{original_
     def generate_general_summary(self, summary_sentences):
         if not summary_sentences or not isinstance(summary_sentences, list) or not summary_sentences[0]:
             return "## Key Information Summary\nNo specific summary points could be extracted from the web content.\n"
-        
+
         summary_points = "\n".join([f"- {s.strip()}" for s in summary_sentences])
         return f"""## Key Information Summary
 Based on the web research, the following key points or summary sentences were extracted:
@@ -735,12 +750,12 @@ Based on the web research, the following key points or summary sentences were ex
     def generate_general_keywords(self, keywords):
         if not keywords or not isinstance(keywords, list) or not keywords[0]:
             return "\n## Main Keywords/Topics\nNo distinct keywords were identified from the content.\n"
-            
+
         keywords_list = ", ".join([kw.capitalize() for kw in keywords])
         return f"""## Main Keywords/Topics
 The research identified the following as prominent keywords or topics within the fetched content:
 - {keywords_list}"""
-    
+
     def generate_text_snippet_section(self, text_snippet):
         if not text_snippet: return ""
         return f"""\n## Extended Content Snippet
@@ -749,7 +764,7 @@ Below is a more extensive snippet from the aggregated web content:
 
     def compile_full_report(self, topic_name, sections, fetched_sources=None, query_type="industry_analysis"):
         current_date = datetime.now().strftime("%B %d, %Y")
-        
+
         report_title_main = f"{topic_name.title()} Information Report"
         report_subtitle = "Key Insights and Summary from Web Research"
         toc_items = ["Introduction", "Key Information Summary", "Main Keywords/Topics"] # Default for general
@@ -760,7 +775,7 @@ Below is a more extensive snippet from the aggregated web content:
             toc_items = ["Executive Summary","Market Overview","Competitor Analysis","Key Industry Trends","Strategic Recommendations","Future Market Outlook"]
 
         title_md = f"# {report_title_main}\n### {report_subtitle}\n#### {current_date}\n"
-        
+
         toc_md = "\n## Table of Contents\n"
         for i, item_name in enumerate(toc_items):
             anchor = item_name.lower().replace(" ", "-").replace("/", "") # Basic anchor
@@ -771,55 +786,53 @@ Below is a more extensive snippet from the aggregated web content:
             toc_md += f"{appendix_toc_num}. [Data Sources Appendix](#data-sources-appendix)\n"
 
         full_report = title_md + toc_md + "".join(sections)
-        
+
         if fetched_sources:
             sources_appendix = f"\n## Data Sources Appendix\nThis report utilized information from:\n"
             for i, source in enumerate(fetched_sources):
                 sources_appendix += f"- [{source.get('title','Source')}]({source.get('link','#')})\n"
             full_report += sources_appendix
-        
+
         disclaimer = """\n---\n*Disclaimer: This AI-generated report is based on web searches and predefined data (if applicable). Use as one of many inputs for decision-making. Information reflects content at time of generation.*"""
         full_report += disclaimer
         return full_report
 
 class ReportVisualizer:
     def create_market_share_chart(self, market_share_data):
-        if not market_share_data or not isinstance(market_share_data, dict) or sum(v for v in market_share_data.values() if isinstance(v, (int,float))) == 0:
+        if not market_share_data or not isinstance(market_share_data, dict) or sum(v_val for v_val in market_share_data.values() if isinstance(v_val, (int,float))) == 0: # Renamed 'v' to 'v_val'
             return generate_placeholder_image(text="Market Share Data N/A")
-        valid_shares = {k: v for k,v in market_share_data.items() if isinstance(v,(int,float)) and v > 0}
+        valid_shares = {k: v_val for k,v_val in market_share_data.items() if isinstance(v_val,(int,float)) and v_val > 0} # Renamed 'v' to 'v_val'
         if not valid_shares: return generate_placeholder_image(text="No Valid Market Share Data")
-        # ... (rest of pie chart logic from before)
         sorted_items = sorted(valid_shares.items(), key=lambda x: x[1], reverse=True)
         max_slices = 5
         if len(sorted_items) > max_slices:
-            main_players = sorted_items[:max_slices-1]; others_share = sum(s for _,s in sorted_items[max_slices-1:])
+            main_players = sorted_items[:max_slices-1]; others_share = sum(s_val for _,s_val in sorted_items[max_slices-1:]) # Renamed 's' to 's_val'
             chart_data_list = main_players + [("Others", others_share)]
         else: chart_data_list = sorted_items
-        labels = [i[0] for i in chart_data_list]; values = [i[1] for i in chart_data_list]
-        return create_pie_chart("Market Share Distribution (%)", labels, values)
-        
+        labels = [i[0] for i in chart_data_list]; values_list = [i[1] for i in chart_data_list] # Renamed 'values' to 'values_list'
+        return create_pie_chart("Market Share Distribution (%)", labels, values_list)
+
     def create_regional_distribution_chart(self, regions_data):
-        if not regions_data or not isinstance(regions_data, dict) or sum(v for v in regions_data.values() if isinstance(v, (int,float))) == 0:
+        if not regions_data or not isinstance(regions_data, dict) or sum(v_val for v_val in regions_data.values() if isinstance(v_val, (int,float))) == 0: # Renamed 'v' to 'v_val'
             return generate_placeholder_image(text="Regional Data N/A")
-        labels = list(regions_data.keys()); values = list(regions_data.values())
-        return create_bar_chart("Regional Market Distribution (%)", "Region", "Market Share (%)", labels, values)
-        
+        labels = list(regions_data.keys()); values_list = list(regions_data.values()) # Renamed 'values' to 'values_list'
+        return create_bar_chart("Regional Market Distribution (%)", "Region", "Market Share (%)", labels, values_list)
+
     def create_segment_distribution_chart(self, segments_data):
-        if not segments_data or not isinstance(segments_data, dict) or sum(v for v in segments_data.values() if isinstance(v, (int,float))) == 0:
+        if not segments_data or not isinstance(segments_data, dict) or sum(v_val for v_val in segments_data.values() if isinstance(v_val, (int,float))) == 0: # Renamed 'v' to 'v_val'
             return generate_placeholder_image(text="Segment Data N/A")
-        labels = list(segments_data.keys()); values = list(segments_data.values())
-        return create_pie_chart("Market Segments Distribution (%)", labels, values)
-        
+        labels = list(segments_data.keys()); values_list = list(segments_data.values()) # Renamed 'values' to 'values_list'
+        return create_pie_chart("Market Segments Distribution (%)", labels, values_list)
+
     def create_forecast_chart(self, forecast_data):
-        if not forecast_data or not isinstance(forecast_data, dict) or not any(v for v in forecast_data.values() if isinstance(v,list)):
+        if not forecast_data or not isinstance(forecast_data, dict) or not any(v_list for v_list in forecast_data.values() if isinstance(v_list,list)): # Renamed 'v' to 'v_list'
             return generate_placeholder_image(text="Forecast Data N/A")
-        # ... (rest of line chart logic from before, ensuring robustness)
         valid_fc_data = {}
         for co, series in forecast_data.items():
             if isinstance(series, list) and all(isinstance(x,(int,float)) for x in series) and len(series)>1:
                 valid_fc_data[co]=series
         if not valid_fc_data: return generate_placeholder_image(text="No Valid Forecast Series")
-        
+
         if len(valid_fc_data)>4: # Limit lines
             sorted_by_last = sorted(valid_fc_data.items(), key=lambda x:x[1][-1], reverse=True)
             plot_data = dict(sorted_by_last[:3])
@@ -853,13 +866,13 @@ class InformationSynthesisSystem: # Renamed from IndustryIntelligenceSystem
         self.analyzer = DataAnalyzer() # Industry-specific analyzer
         self.generator = ReportGenerator()
         self.visualizer = ReportVisualizer()
-        
+
     def process_query(self, query_text):
         processed_data = self.researcher.get_query_data(query_text)
-        
+
         query_type = processed_data.get("query_type", "general_information")
         report_topic_name = processed_data.get("query_topic", "General Topic")
-        st.session_state.current_topic_name = report_topic_name 
+        st.session_state.current_topic_name = report_topic_name
 
         sections = []
         visualizations = {}
@@ -871,14 +884,14 @@ class InformationSynthesisSystem: # Renamed from IndustryIntelligenceSystem
             regional_analysis = self.analyzer.analyze_regional_impact(processed_data)
             segment_analysis = self.analyzer.analyze_segments(processed_data)
             future_analysis = self.analyzer.analyze_future_outlook(processed_data)
-            
+
             sections.append(self.generator.generate_executive_summary(report_topic_name, market_analysis, competitor_analysis))
             sections.append(self.generator.generate_market_overview(report_topic_name, market_analysis, regional_analysis, segment_analysis))
             sections.append(self.generator.generate_competitor_analysis(report_topic_name, competitor_analysis))
             sections.append(self.generator.generate_trends_analysis(market_analysis))
             sections.append(self.generator.generate_strategic_recommendations(report_topic_name, market_analysis, competitor_analysis, future_analysis))
             sections.append(self.generator.generate_future_outlook(report_topic_name, future_analysis))
-            
+
             visualizations["market_share"] = self.visualizer.create_market_share_chart(processed_data.get("market_share"))
             visualizations["regional"] = self.visualizer.create_regional_distribution_chart(processed_data.get("regions"))
             visualizations["segment"] = self.visualizer.create_segment_distribution_chart(processed_data.get("segments"))
@@ -906,22 +919,22 @@ class InformationSynthesisSystem: # Renamed from IndustryIntelligenceSystem
             }
 
         full_report_md = self.generator.compile_full_report(report_topic_name, sections, processed_data.get("fetched_sources"), query_type)
-        
+
         return {
             "report_md": full_report_md,
             "topic_name": report_topic_name,
             "query_type": query_type,
             "visualizations": visualizations,
-            "ui_summary_metrics": report_data_summary 
+            "ui_summary_metrics": report_data_summary
         }
 
 # Streamlit UI
 def main():
     st.set_page_config(page_title="AI Research & Report Generator", layout="wide")
-    
+
     st.title("🧠 AI Research & Report Generator")
     st.subheader("Get insights on any topic or industry analysis using web data.")
-    
+
     if not DUCKDUCKGO_SEARCH_AVAILABLE:
         st.warning("`duckduckgo_search` library not found. Web search will be simulated. For live web search, please install it: `pip install duckduckgo-search`", icon="⚠️")
 
@@ -932,7 +945,7 @@ def main():
     @st.cache_resource
     def load_system(): return InformationSynthesisSystem()
     system = load_system()
-    
+
     st.markdown("### Enter Your Query")
     query_examples = [
         "Generate a strategy report for the electric vehicle market",
@@ -941,60 +954,60 @@ def main():
         "History of Python programming language",
         "Renewable energy market trends and opportunities"
     ]
-    
-    st.session_state.query_input = st.text_input("Enter your query (e.g., 'AI market trends' or 'effects of climate change')", 
+
+    st.session_state.query_input = st.text_input("Enter your query (e.g., 'AI market trends' or 'effects of climate change')",
                                                  value=st.session_state.query_input, key="query_text_field")
-    
+
     st.markdown("**Example queries:**")
     cols = st.columns(len(query_examples))
     for i, example in enumerate(query_examples):
         if cols[i].button(example, key=f"example_{i}", use_container_width=True):
             st.session_state.query_input = example
-            st.experimental_rerun()
+            st.rerun() # CORRECTED
 
     generate_button = st.button("🚀 Generate Report", type="primary", use_container_width=True, disabled=(not st.session_state.query_input))
-    
+
     if generate_button and st.session_state.query_input:
         query_to_process = st.session_state.query_input
         with st.spinner(f"Researching and generating report for: '{query_to_process[:60]}...' This may take moments."):
             progress_bar = st.progress(0, text="Initializing...")
             start_time = time.time()
-            
-            # Update progress helper
-            def update_progress(value, text):
-                progress_bar.progress(value, text=text)
-                # time.sleep(0.05) # Minimal sleep for UX
 
-            update_progress(5, "Understanding query...")
+            # Update progress helper
+            # def update_progress(value, text): #This local function is not used
+            #     progress_bar.progress(value, text=text)
+            #     # time.sleep(0.05) # Minimal sleep for UX
+
+            progress_bar.progress(5, text="Understanding query...") # Replaced update_progress call
             result = system.process_query(query_to_process) # This now includes web search & type detection
             # Progress updates happen via st.write within the system for now
-            
-            update_progress(70, "Analyzing information...")
-            update_progress(85, "Compiling report sections...")
-            update_progress(95, "Creating visualizations...")
-            
+
+            progress_bar.progress(70, text="Analyzing information...") # Replaced update_progress call
+            progress_bar.progress(85, text="Compiling report sections...") # Replaced update_progress call
+            progress_bar.progress(95, text="Creating visualizations...") # Replaced update_progress call
+
             progress_bar.progress(100, text="Report finalized!")
             time.sleep(0.3)
             progress_bar.empty()
-        
+
         end_time = time.time()
         st.success(f"📊 Report for '{result['topic_name'].title()}' ({result['query_type']}) generated in {end_time - start_time:.2f} seconds!")
-        
+
         st.markdown("#### Summary of Fetched Data:")
         sum_metrics = result["ui_summary_metrics"]
         num_metrics = len(sum_metrics)
         metric_cols = st.columns(num_metrics if num_metrics > 0 else 1)
-        
-        i = 0
+
+        metric_idx = 0 # Renamed 'i' to 'metric_idx'
         for key, val in sum_metrics.items():
-            metric_cols[i % num_metrics].metric(key, str(val))
-            i+=1
+            metric_cols[metric_idx % num_metrics].metric(key, str(val))
+            metric_idx+=1
 
         report_tab, visuals_tab, export_tab = st.tabs(["📝 Full Report", "📊 Visualizations", "💾 Export Options"])
-        
+
         with report_tab:
             st.markdown(result["report_md"])
-            
+
         with visuals_tab:
             st.subheader(f"Visual Insights for {result['topic_name'].title()}")
             if result["query_type"] == "industry_analysis":
